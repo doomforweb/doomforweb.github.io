@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>DOOM for Web</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0505">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="DOOM">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root {
+  --bg: #0b0505;
+  --panel: #1a0e0e;
+  --panel2: #251414;
+  --line: #4a2323;
+  --fg: #f1e6dc;
+  --dim: #b39d90;
+  --accent: #d8321f;
+  --accent2: #ff7a2f;
+  --ok: #5fbf5a;
+  --u: calc(var(--ui-scale, 1) * clamp(46px, 10.5vmin, 80px));   /* touch button unit */
+  --op: var(--ui-opacity, .55);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; height: 100%; background: #000; color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Hiragino Sans", "Yu Gothic UI", "Noto Sans JP", sans-serif;
+  overflow: hidden; overscroll-behavior: none;
+}
+body { position: fixed; inset: 0; height: 100dvh; width: 100%; }
+button, select, input { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+
+/* ---------------------------------------------------------------- game view */
+#stage { position: absolute; inset: 0; background: #000; }
+#view {
+  position: absolute;
+  top: env(safe-area-inset-top, 0px); right: env(safe-area-inset-right, 0px);
+  bottom: env(safe-area-inset-bottom, 0px); left: env(safe-area-inset-left, 0px);
+  display: flex; justify-content: center; align-items: center; overflow: hidden;
+}
+/* portrait phones: park the picture at the top so the controls get the space below */
+#app.portrait.touch #view { align-items: flex-start; }
+#screen { display: block; background: #000; touch-action: none; outline: none; }
+
+/* ---------------------------------------------------------------- toolbar */
+#toolbar {
+  position: absolute; z-index: 30; display: flex; gap: 6px;
+  top: calc(env(safe-area-inset-top, 0px) + 6px); right: calc(env(safe-area-inset-right, 0px) + 6px);
+  opacity: .85;
+}
+#app.fullscreen-ui-hidden #toolbar { display: none; }
+.tb {
+  width: 40px; height: 40px; border-radius: 10px; border: 1px solid rgba(255,255,255,.25);
+  background: rgba(10,5,5,.55); backdrop-filter: blur(4px); cursor: pointer; font-size: 18px; line-height: 1;
+  display: grid; place-items: center; padding: 0;
+}
+.tb:hover { background: rgba(60,20,15,.8); }
+.tb.on { background: rgba(216,50,31,.7); }
+
+/* ---------------------------------------------------------------- touch layer */
+#touch { position: absolute; inset: 0; z-index: 20; pointer-events: none; display: none; }
+#app.touch.running #touch { display: block; }
+#touch > * { pointer-events: auto; }
+.zone { position: absolute; bottom: 0; width: 50%; height: 78%; touch-action: none; }
+#moveZone { left: 0; } #lookZone { right: 0; }
+#app.swap #moveZone { left: auto; right: 0; } #app.swap #lookZone { left: 0; right: auto; }
+#app.menumode .zone, #app.menumode #hud, #app.menumode #fireBtn, #app.menumode #useBtn, #app.menumode #wpnBtns { display: none; }
+
+#stickBase {
+  position: absolute; width: calc(var(--u) * 2.2); height: calc(var(--u) * 2.2); margin: calc(var(--u) * -1.1) 0 0 calc(var(--u) * -1.1);
+  border-radius: 50%; border: 2px solid rgba(255,255,255,calc(var(--op) + .15)); background: rgba(255,255,255,.08);
+  pointer-events: none; display: none; z-index: 21;
+}
+#stickKnob {
+  position: absolute; left: 50%; top: 50%; width: calc(var(--u) * 1.0); height: calc(var(--u) * 1.0); margin: calc(var(--u) * -.5) 0 0 calc(var(--u) * -.5);
+  border-radius: 50%; background: rgba(255,255,255,calc(var(--op) + .1)); box-shadow: 0 0 12px rgba(0,0,0,.5);
+}
+.hint {
+  position: absolute; color: rgba(255,255,255,.35); font-size: 12px; letter-spacing: .1em; pointer-events: none; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+  text-shadow: 0 0 4px #000;
+}
+#hintMove { left: calc(env(safe-area-inset-left, 0px) + 16px); }
+#hintLook { right: calc(env(safe-area-inset-right, 0px) + 16px); }
+#app.swap #hintMove { left: auto; right: calc(env(safe-area-inset-right, 0px) + 16px); }
+#app.swap #hintLook { right: auto; left: calc(env(safe-area-inset-left, 0px) + 16px); }
+#app.used-touch .hint { display: none; }
+
+.tbtn {
+  position: absolute; z-index: 22; border-radius: 50%; border: 2px solid rgba(255,255,255,calc(var(--op) + .2));
+  background: rgba(30,12,10,calc(var(--op))); color: rgba(255,255,255,.95); font-weight: 700; letter-spacing: .03em;
+  display: grid; place-items: center; padding: 0; touch-action: none; user-select: none; -webkit-user-select: none;
+  font-size: calc(var(--u) * .28); backdrop-filter: blur(2px);
+}
+.tbtn.down { background: rgba(216,50,31,.85); transform: scale(.94); }
+#fireBtn {
+  width: calc(var(--u) * 1.9); height: calc(var(--u) * 1.9);
+  right: calc(env(safe-area-inset-right, 0px) + 18px); bottom: calc(env(safe-area-inset-bottom, 0px) + 22px); font-size: calc(var(--u) * .38);
+  background: rgba(200,40,25,calc(var(--op) + .1));
+}
+#useBtn {
+  width: calc(var(--u) * 1.3); height: calc(var(--u) * 1.3);
+  right: calc(env(safe-area-inset-right, 0px) + 18px + var(--u) * 2.0); bottom: calc(env(safe-area-inset-bottom, 0px) + 22px);
+}
+#wpnBtns { position: absolute; z-index: 22; right: calc(env(safe-area-inset-right, 0px) + 18px); bottom: calc(env(safe-area-inset-bottom, 0px) + 36px + var(--u) * 1.9); display: flex; gap: calc(var(--u) * .25); }
+#wpnBtns .tbtn { position: static; width: calc(var(--u) * 1.0); height: calc(var(--u) * 1.0); border-radius: 14px; }
+#app.swap #fireBtn, #app.swap #useBtn, #app.swap #wpnBtns { right: auto; }
+#app.swap #fireBtn { left: calc(env(safe-area-inset-left, 0px) + 18px); }
+#app.swap #useBtn { left: calc(env(safe-area-inset-left, 0px) + 18px + var(--u) * 2.0); }
+#app.swap #wpnBtns { left: calc(env(safe-area-inset-left, 0px) + 18px); }
+
+#hud { position: absolute; z-index: 22; top: calc(env(safe-area-inset-top, 0px) + 6px); left: calc(env(safe-area-inset-left, 0px) + 6px); display: flex; gap: 8px; }
+#hud .tbtn { position: static; width: calc(var(--u) * .95); height: calc(var(--u) * .95); border-radius: 12px; }
+
+/* menu pad (title / menus / intermission) */
+#menupad { position: absolute; inset: 0; pointer-events: none; display: none; z-index: 22; }
+#app.touch.running.menumode #menupad { display: block; }
+#menupad > * { pointer-events: auto; }
+#dpad {
+  position: absolute; left: calc(env(safe-area-inset-left, 0px) + 18px); bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  width: calc(var(--u) * 3.3); height: calc(var(--u) * 3.3);
+}
+#dpad .tbtn { border-radius: 14px; width: calc(var(--u) * 1.1); height: calc(var(--u) * 1.1); font-size: calc(var(--u) * .5); }
+#dpad [data-key="173"] { left: 33.3%; top: 0; } #dpad [data-key="175"] { left: 33.3%; bottom: 0; }
+#dpad [data-key="172"] { left: 0; top: 33.3%; } #dpad [data-key="174"] { right: 0; top: 33.3%; }
+#padActions {
+  position: absolute; right: calc(env(safe-area-inset-right, 0px) + 18px); bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  width: calc(var(--u) * 3.6); height: calc(var(--u) * 3.3);
+}
+#padActions .tbtn { width: calc(var(--u) * 1.25); height: calc(var(--u) * 1.25); font-size: calc(var(--u) * .3); }
+#padActions [data-key="13"] { right: 0; bottom: calc(var(--u) * 1.1); }
+#padActions [data-key="27"] { right: calc(var(--u) * 1.4); bottom: calc(var(--u) * 1.1); }
+#padActions [data-key="121"] { right: 0; bottom: 0; background: rgba(40,110,40,calc(var(--op) + .1)); }
+#padActions [data-key="110"] { right: calc(var(--u) * 1.4); bottom: 0; background: rgba(120,30,30,calc(var(--op) + .1)); }
+
+#kbd { position: fixed; left: -100px; top: 0; width: 20px; height: 20px; opacity: 0; font-size: 16px; }
+
+/* ---------------------------------------------------------------- overlays */
+.overlay { position: absolute; inset: 0; z-index: 50; overflow: auto; -webkit-overflow-scrolling: touch;
+  padding: calc(env(safe-area-inset-top, 0px) + 16px) calc(env(safe-area-inset-right, 0px) + 16px) calc(env(safe-area-inset-bottom, 0px) + 16px) calc(env(safe-area-inset-left, 0px) + 16px); }
+#loader {
+  background:
+    radial-gradient(1200px 600px at 50% -10%, rgba(216,50,31,.30), transparent 60%),
+    linear-gradient(#120707, #060303);
+  display: flex; justify-content: center;
+}
+.card { width: min(720px, 100%); margin: auto; }
+h1 { margin: 0 0 4px; font-size: clamp(30px, 7vw, 52px); letter-spacing: .06em; font-weight: 900; color: #fff;
+  text-shadow: 0 2px 0 #7b140b, 0 0 24px rgba(216,50,31,.55); }
+h1 small { font-size: .38em; letter-spacing: .2em; color: var(--accent2); display: block; text-shadow: none; }
+.sub { color: var(--dim); margin: 0 0 18px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+.panel h2 { font-size: 13px; margin: 0 0 10px; letter-spacing: .12em; color: var(--accent2); text-transform: uppercase; }
+#drop {
+  border: 2px dashed #6b3a30; border-radius: 12px; padding: 22px 12px; text-align: center; color: var(--dim); cursor: pointer;
+  background: rgba(255,255,255,.02); transition: .15s;
+}
+#drop.over { border-color: var(--accent2); background: rgba(216,50,31,.14); color: #fff; }
+#drop strong { color: #fff; display: block; font-size: 17px; margin-bottom: 4px; }
+.btn {
+  border: 1px solid var(--line); background: var(--panel2); color: var(--fg); padding: 9px 16px; border-radius: 10px; cursor: pointer;
+  font-weight: 600;
+}
+.btn:hover { border-color: #8a4a3a; }
+.btn.primary { background: linear-gradient(#e2442a, #b3200f); border-color: #ff8a60; color: #fff; font-size: 17px; padding: 13px 26px; letter-spacing: .06em; }
+.btn.primary:disabled { opacity: .35; cursor: not-allowed; filter: grayscale(.6); }
+.btn.small { padding: 4px 10px; font-size: 13px; border-radius: 8px; font-weight: 500; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; min-width: 0; }
+#lib { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+#lib li { display: flex; align-items: center; gap: 10px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+#lib li.sel { border-color: var(--accent2); box-shadow: 0 0 0 1px rgba(255,122,47,.35) inset; }
+#lib .nm { font-weight: 600; word-break: break-all; }
+#lib .meta { font-size: 12px; color: var(--dim); }
+#lib input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+.tag { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: #3a1c18; border: 1px solid #6b3a30; margin-left: 6px; vertical-align: 1px; }
+.tag.iwad { background: #3a1010; color: #ff9a85; } .tag.pwad { background: #102a3a; color: #8fd0ff; border-color: #2d5a78; }
+.note { font-size: 13px; color: var(--dim); }
+.note a { color: var(--accent2); }
+details summary { cursor: pointer; color: var(--dim); }
+input[type=text] { width: 100%; background: #0f0808; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+#bar { height: 6px; background: #2a1613; border-radius: 4px; overflow: hidden; margin-top: 8px; }
+#bar > i { display: block; height: 100%; width: 0; background: var(--accent2); transition: width .1s; }
+
+#msg { background: rgba(0,0,0,.86); display: grid; place-items: center; }
+#msg .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px; max-width: 640px; }
+#msg h2 { margin: 0 0 8px; color: var(--accent2); }
+#msg pre { background: #0b0505; border: 1px solid var(--line); border-radius: 8px; padding: 8px; max-height: 40vh; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+
+#settings { background: rgba(0,0,0,.72); display: grid; place-items: center; z-index: 60; }
+#settings .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; max-height: 100%; overflow: auto; }
+#settings h2 { margin: 0 0 10px; }
+.field { display: grid; grid-template-columns: minmax(110px, 36%) 1fr; gap: 6px 12px; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
+.field > label { color: var(--dim); font-size: 14px; }
+.field select, .field input[type=range] { width: 100%; }
+.field select { background: #0f0808; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.field input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); }
+.field input[type=range] { accent-color: var(--accent2); }
+.sec { margin: 14px 0 2px; font-size: 12px; letter-spacing: .12em; color: var(--accent2); text-transform: uppercase; }
+
+#toast { position: absolute; z-index: 70; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 80px); transform: translateX(-50%);
+  background: rgba(0,0,0,.82); border: 1px solid var(--line); padding: 8px 14px; border-radius: 10px; font-size: 14px; pointer-events: none; opacity: 0; transition: opacity .25s; max-width: 90vw; text-align: center; }
+#toast.show { opacity: 1; }
+
+@media (max-width: 520px) { .field { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="stage">
+    <div id="view"><canvas id="screen" tabindex="0"></canvas></div>
+  </div>
+
+  <!-- touch controls -->
+  <div id="touch">
+    <div id="moveZone" class="zone"></div>
+    <div id="lookZone" class="zone"></div>
+    <div id="stickBase"><div id="stickKnob"></div></div>
+    <div id="hintMove" class="hint" data-i18n="hintMove">◀ 移動</div>
+    <div id="hintLook" class="hint" data-i18n="hintLook">視点 ▶</div>
+
+    <div id="hud">
+      <button class="tbtn" data-key="27" aria-label="Menu">☰</button>
+      <button class="tbtn" data-key="9" aria-label="Map">MAP</button>
+    </div>
+    <div id="wpnBtns">
+      <button class="tbtn" data-act="prevWeapon" aria-label="Previous weapon">◀</button>
+      <button class="tbtn" data-act="nextWeapon" aria-label="Next weapon">▶</button>
+    </div>
+    <button id="useBtn" class="tbtn" data-key="32">USE</button>
+    <button id="fireBtn" class="tbtn" data-key="157">FIRE</button>
+
+    <div id="menupad">
+      <div id="dpad">
+        <button class="tbtn" data-key="173" data-repeat="1" aria-label="Up">▲</button>
+        <button class="tbtn" data-key="172" data-repeat="1" aria-label="Left">◀</button>
+        <button class="tbtn" data-key="174" data-repeat="1" aria-label="Right">▶</button>
+        <button class="tbtn" data-key="175" data-repeat="1" aria-label="Down">▼</button>
+      </div>
+      <div id="padActions">
+        <button class="tbtn" data-key="13">OK</button>
+        <button class="tbtn" data-key="27" data-i18n="back">戻る</button>
+        <button class="tbtn" data-key="121">Y</button>
+        <button class="tbtn" data-key="110">N</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toolbar">
+    <button class="tb" id="btnMute" title="Sound" aria-label="Sound">🔊</button>
+    <button class="tb" id="btnFs" title="Fullscreen" aria-label="Fullscreen">⛶</button>
+    <button class="tb" id="btnCfg" title="Settings" aria-label="Settings">⚙</button>
+  </div>
+  <input id="kbd" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-hidden="true" tabindex="-1">
+
+  <!-- WAD loader -->
+  <section id="loader" class="overlay">
+    <div class="card">
+      <h1><small>PORTED TO THE WEB</small>DOOM</h1>
+      <p class="sub" data-i18n="subtitle">linuxdoom-1.10 を WebAssembly に移植したブラウザ版。ゲームデータ（WAD）はご自身のものを読み込んでください。</p>
+
+      <div class="panel">
+        <h2 data-i18n="wadFiles">WAD ファイル</h2>
+        <div id="drop" role="button" tabindex="0">
+          <strong data-i18n="dropTitle">ここに WAD をドロップ、またはタップして選択</strong>
+          <span data-i18n="dropSub">IWAD（doom.wad / doom2.wad / freedoom 等）を1つ、必要なら PWAD を追加。複数選択できます。</span>
+        </div>
+        <input id="file" type="file" multiple hidden>
+        <ul id="lib"></ul>
+        <div id="srvWrap" hidden>
+          <h2 style="margin-top:14px" data-i18n="onServer">サーバー上の WAD</h2>
+          <ul id="srvList" class="note" style="list-style:none;padding:0;margin:0;display:grid;gap:6px"></ul>
+        </div>
+        <div id="bar" hidden><i></i></div>
+        <p id="libNote" class="note" style="margin:10px 0 0"></p>
+      </div>
+
+      <div class="row" style="margin-bottom:14px">
+        <button id="start" class="btn primary" disabled data-i18n="start">ゲーム開始</button>
+        <span id="startInfo" class="note grow"></span>
+      </div>
+
+      <details class="panel">
+        <summary data-i18n="advanced">詳細オプション</summary>
+        <div style="margin-top:10px">
+          <label class="note" for="extraArgs" data-i18n="extraArgs">追加のコマンドライン引数（例: -skill 4 -warp 1 1 -nomonsters -fast）</label>
+          <input id="extraArgs" type="text" placeholder="-skill 3 -warp 1 1">
+        </div>
+      </details>
+
+      <p id="iosNote" class="note" hidden data-i18n="iosNote">iPhone の Safari では全画面 API が使えません。共有メニューから「ホーム画面に追加」すると全画面で遊べます。</p>
+      <p class="note" data-i18n="license">Doom のソースコードは GNU GPL v2 で公開されています。WAD ファイルは同梱されていません。WAD はブラウザの外には送信されません。</p>
+    </div>
+  </section>
+
+  <!-- messages (errors / exit) -->
+  <section id="msg" class="overlay" hidden>
+    <div class="card">
+      <h2 id="msgTitle"></h2>
+      <p id="msgBody"></p>
+      <pre id="msgLog" hidden></pre>
+      <div class="row" style="margin-top:12px">
+        <button id="msgRestart" class="btn primary" style="font-size:15px;padding:10px 18px" data-i18n="restart">もう一度</button>
+        <button id="msgBack" class="btn" data-i18n="backToWads">WAD選択へ戻る</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- settings -->
+  <section id="settings" class="overlay" hidden>
+    <div class="card" style="width:min(560px,100%)">
+      <div class="row"><h2 class="grow" data-i18n="settings">設定</h2><button class="btn small" id="cfgClose">✕</button></div>
+
+      <div class="sec" data-i18n="secDisplay">表示</div>
+      <div class="field"><label data-i18n="aspect">画面比率</label>
+        <select data-k="aspect">
+          <option value="4:3" data-i18n="asp43">4:3（オリジナル・縦長ピクセル）</option>
+          <option value="16:10" data-i18n="asp1610">16:10（正方形ピクセル）</option>
+          <option value="fill" data-i18n="aspFill">画面いっぱいに引き伸ばし</option>
+        </select></div>
+      <div class="field"><label data-i18n="filter">拡大フィルタ</label>
+        <select data-k="filter">
+          <option value="crisp" data-i18n="fCrisp">くっきり（推奨）</option>
+          <option value="nearest" data-i18n="fNearest">ニアレスト（ドットそのまま）</option>
+          <option value="smooth" data-i18n="fSmooth">なめらか</option>
+        </select></div>
+
+      <div class="sec" data-i18n="secSound">サウンド</div>
+      <div class="field"><label data-i18n="sfxVol">効果音の音量</label><input type="range" min="0" max="1.5" step="0.05" data-k="sfxScale"></div>
+      <div class="field"><label data-i18n="musVol">音楽の音量</label><input type="range" min="0" max="1.5" step="0.05" data-k="musicScale"></div>
+      <div class="field"><label data-i18n="mute">ミュート</label><input type="checkbox" data-k="muted"></div>
+
+      <div class="sec" data-i18n="secInput">操作</div>
+      <div class="field"><label data-i18n="touchMode">タッチ操作</label>
+        <select data-k="touch">
+          <option value="auto" data-i18n="tAuto">自動</option>
+          <option value="on" data-i18n="tOn">常に表示</option>
+          <option value="off" data-i18n="tOff">非表示</option>
+        </select></div>
+      <div class="field"><label data-i18n="uiScale">ボタンの大きさ</label><input type="range" min="0.6" max="1.6" step="0.05" data-k="uiScale"></div>
+      <div class="field"><label data-i18n="uiOpacity">ボタンの濃さ</label><input type="range" min="0.15" max="0.9" step="0.05" data-k="uiOpacity"></div>
+      <div class="field"><label data-i18n="lookSens">視点感度（タッチ）</label><input type="range" min="1.5" max="14" step="0.5" data-k="lookSens"></div>
+      <div class="field"><label data-i18n="stickMode">スティック横方向</label>
+        <select data-k="stickMode">
+          <option value="strafe" data-i18n="smStrafe">横移動（ストレイフ）</option>
+          <option value="turn" data-i18n="smTurn">旋回</option>
+        </select></div>
+      <div class="field"><label data-i18n="swap">左右を入れ替え</label><input type="checkbox" data-k="swapSides"></div>
+      <div class="field"><label data-i18n="mouseSens">マウス感度</label><input type="range" min="0.5" max="10" step="0.5" data-k="mouseSens"></div>
+      <div class="field"><label data-i18n="wasd">WASD で移動（E=使う）</label><input type="checkbox" data-k="wasd"></div>
+      <p class="note" data-i18n="wasdNote">WASD を有効にするとチートコード（iddqd など）の d / a が入力できません。チートを使うときはオフにしてください。</p>
+
+      <div class="row" style="margin-top:14px">
+        <button class="btn" id="cfgFs" data-i18n="fullscreen">全画面</button>
+        <button class="btn" id="cfgBack" data-i18n="backToWads">WAD選択へ戻る</button>
+        <button class="btn" id="cfgReset" data-i18n="resetCfg">設定を初期化</button>
+      </div>
+      <p class="note" style="margin-bottom:0" data-i18n="keysHelp">キー: 矢印/WASD=移動・Ctrl/左クリック=撃つ・Space/E/右クリック=使う・Shift=走る・Alt+←→=横移動・1〜7=武器・Tab=マップ・Esc=メニュー・マウスホイール=武器切替</p>
+    </div>
+  </section>
+
+  <div id="toast"></div>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
